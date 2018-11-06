@@ -8,19 +8,15 @@ import {
 	fetch as fetchAccount,
 	fetchAll as fetchAllAccounts
 } from './service/AccountService'
+import {fetchAll as fetchAllFolders,} from './service/FolderService'
 import {
-	fetchAll as fetchAllFolders,
-} from './service/FolderService'
-import {
-	fetchEnvelopes,
-	syncEnvelopes,
-	setEnvelopeFlag,
-	fetchMessage,
 	deleteMessage,
+	fetchEnvelopes,
+	fetchMessage,
+	setEnvelopeFlag,
+	syncEnvelopes,
 } from './service/MessageService'
-import {
-	showNewMessagesNotification
-} from './service/NotificationService'
+import {showNewMessagesNotification} from './service/NotificationService'
 import {parseUid} from './util/EnvelopeUidParser'
 
 Vue.use(Vuex)
@@ -45,7 +41,7 @@ export const mutations = {
 	},
 	addEnvelope (state, {accountId, folder, envelope}) {
 		const uid = accountId + '-' + folder.id + '-' + envelope.id
-		const insertNoDuplicate = folder => {
+		const insert = folder => {
 			Vue.set(
 				folder,
 				'envelopes',
@@ -63,13 +59,10 @@ export const mutations = {
 		envelope.folderId = folder.id
 		envelope.uid = uid
 		Vue.set(state.envelopes, uid, envelope)
-		insertNoDuplicate(folder)
-
-		// All envelopes are added to the unified mailboxes
-		state.accounts[0].folders
-			.map(id => state.folders[id])
-			.filter(f => f.specialRole === folder.specialRole)
-			.forEach(insertNoDuplicate)
+		insert(folder)
+	},
+	addUnifiedEnvelopes (state, {folder, envelopes}) {
+		Vue.set(folder, 'envelopes', envelopes.map(e => e.uid))
 	},
 	flagEnvelope (state, {envelope, flag, value}) {
 		envelope.flags[flag] = value
@@ -130,7 +123,7 @@ export const actions = {
 			return folders
 		})
 	},
-	fetchEnvelopes ({commit, getters, dispatch}, {accountId, folderId}) {
+	fetchEnvelopes ({state, commit, getters, dispatch}, {accountId, folderId}) {
 		const folder = getters.getFolder(accountId, folderId)
 		if (folder.isUnified) {
 			return Promise.all(
@@ -144,7 +137,18 @@ export const actions = {
 								folderId: folder.id,
 							})))
 					)
-			).then(res => _.flattenDepth(res, 2))
+			)
+				.then(res => _.flattenDepth(res, 2))
+				.then(envs => _.orderBy(
+					envs,
+					env => env.dateInt,
+					'desc'
+				))
+				.then(envs => _.slice(envs, 0, 20))
+				.then(envelopes => commit('addUnifiedEnvelopes', {
+					folder,
+					envelopes,
+				}))
 		}
 
 		return fetchEnvelopes(accountId, folderId).then(envs => {
