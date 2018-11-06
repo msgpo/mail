@@ -1,6 +1,7 @@
 import _ from 'lodash'
 import Vue from 'vue'
 import Vuex from 'vuex'
+import {translate as t} from 'nextcloud-server/dist/l10n'
 
 import {
 	create as createAccount,
@@ -43,17 +44,32 @@ export const mutations = {
 		folder.syncToken = syncToken
 	},
 	addEnvelope (state, {accountId, folder, envelope}) {
-		let uid = accountId + '-' + folder.id + '-' + envelope.id
+		const uid = accountId + '-' + folder.id + '-' + envelope.id
+		const insertNoDuplicate = folder => {
+			Vue.set(
+				folder,
+				'envelopes',
+				_.sortedUniq(
+					_.orderBy(
+						folder.envelopes.concat([uid]),
+						id => state.envelopes[id].dateInt,
+						'desc'
+					)
+				)
+			)
+		}
+
 		envelope.accountId = accountId
 		envelope.folderId = folder.id
 		envelope.uid = uid
 		Vue.set(state.envelopes, uid, envelope)
-		// TODO: prepend/append sort magic
-		// TODO: reduce O(n) complexity
-		if (folder.envelopes.indexOf(uid) === -1) {
-			// Prevent duplicates
-			folder.envelopes.push(uid)
-		}
+		insertNoDuplicate(folder)
+
+		// All envelopes are added to the unified mailboxes
+		state.accounts[0].folders
+			.map(id => state.folders[id])
+			.filter(f => f.specialRole === folder.specialRole)
+			.forEach(insertNoDuplicate)
 	},
 	flagEnvelope (state, {envelope, flag, value}) {
 		envelope.flags[flag] = value
@@ -114,7 +130,23 @@ export const actions = {
 			return folders
 		})
 	},
-	fetchEnvelopes ({commit, getters}, {accountId, folderId}) {
+	fetchEnvelopes ({commit, getters, dispatch}, {accountId, folderId}) {
+		const folder = getters.getFolder(accountId, folderId)
+		if (folder.isUnified) {
+			return Promise.all(
+				getters.getAccounts()
+					.filter(account => !account.isUnified)
+					.map(account => Promise.all(
+						getters.getFolders(account.id)
+							.filter(f => f.specialRole === folder.specialRole)
+							.map(folder => dispatch('fetchEnvelopes', {
+								accountId: account.id,
+								folderId: folder.id,
+							})))
+					)
+			).then(res => _.flattenDepth(res, 2))
+		}
+
 		return fetchEnvelopes(accountId, folderId).then(envs => {
 			let folder = getters.getFolder(accountId, folderId)
 
@@ -302,7 +334,10 @@ export const getters = {
 		return state.accounts[id]
 	},
 	getAccounts: (state) => () => {
-		return Object.keys(state.accounts).map(id => state.accounts[id])
+		return _.sortBy(
+			Object.keys(state.accounts).map(id => state.accounts[id]),
+			account => account.id,
+		)
 	},
 	getFolder: (state) => (accountId, folderId) => {
 		return state.folders[accountId + '-' + folderId]
@@ -327,8 +362,26 @@ export const getters = {
 export default new Vuex.Store({
 	strict: process.env.NODE_ENV !== 'production',
 	state: {
-		accounts: {},
-		folders: {},
+		accounts: {
+			0: {
+				id: 0,
+				isUnified: true,
+				folders: ['0-inbox'],
+				collapsed: false,
+				emailAddress: '',
+				name: ''
+			},
+		},
+		folders: {
+			'0-inbox': {
+				id: 'inbox',
+				isUnified: true,
+				specialRole: 'inbox',
+				name: t('mail', 'All inboxes'), // TODO,
+				unread: 0,
+				envelopes: [],
+			}
+		},
 		envelopes: {},
 		messages: {},
 	},
