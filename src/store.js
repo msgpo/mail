@@ -164,6 +164,11 @@ export const actions = {
 	},
 	fetchNextEnvelopePage ({commit, getters}, {accountId, folderId}) {
 		const folder = getters.getFolder(accountId, folderId)
+
+		if (folder.isUnified) {
+			// TODO
+		}
+
 		const lastEnvelopeId = folder.envelopes[folder.envelopes.length - 1]
 		if (typeof lastEnvelopeId === 'undefined') {
 			console.error('folder is empty', folder.envelopes)
