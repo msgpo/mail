@@ -188,8 +188,24 @@ export const actions = {
 			return envs
 		})
 	},
-	syncEnvelopes ({commit, getters}, {accountId, folderId}) {
+	syncEnvelopes ({commit, getters, dispatch}, {accountId, folderId}) {
 		const folder = getters.getFolder(accountId, folderId)
+
+		if (folder.isUnified) {
+			return Promise.all(
+				getters.getAccounts()
+					.filter(account => !account.isUnified)
+					.map(account => Promise.all(
+						getters.getFolders(account.id)
+							.filter(f => f.specialRole === folder.specialRole)
+							.map(folder => dispatch('syncEnvelopes', {
+								accountId: account.id,
+								folderId: folder.id,
+							})))
+					)
+			)
+		}
+
 		const syncToken = folder.syncToken
 		const uids = getters.getEnvelopes(accountId, folderId).map(env => env.id)
 
@@ -219,18 +235,20 @@ export const actions = {
 	},
 	syncInboxes ({getters, dispatch}) {
 		console.debug('syncing all inboxes')
-		return Promise.all(getters.getAccounts().map(account => {
-			return Promise.all(getters.getFolders(account.id).map(folder => {
-				if (folder.specialRole !== 'inbox') {
-					return
-				}
+		return Promise.all(getters.getAccounts()
+			.filter(a => !a.isUnified)
+			.map(account => {
+				return Promise.all(getters.getFolders(account.id).map(folder => {
+					if (folder.specialRole !== 'inbox') {
+						return
+					}
 
-				return dispatch('syncEnvelopes', {
-					accountId: account.id,
-					folderId: folder.id,
-				})
+					return dispatch('syncEnvelopes', {
+						accountId: account.id,
+						folderId: folder.id,
+					})
+				}))
 			}))
-		}))
 			.then(results => {
 				console.debug('synced all inboxes successfully')
 
